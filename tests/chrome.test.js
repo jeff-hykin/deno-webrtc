@@ -56,6 +56,8 @@ Deno.test({
             })()`)
             const pc = new RTCPeerConnection()
             const channelEvent = nextEvent(pc, "datachannel", 20000)
+            // listening from the moment the channel exists: Chrome sends as soon as it opens
+            const firstMessage = channelEvent.then(({ channel }) => nextEvent(channel, "message", 20000))
             await pc.setRemoteDescription(offer)
             await pc.setLocalDescription()
             const answer = await completeDescription(pc)
@@ -68,7 +70,7 @@ Deno.test({
             const channel = (await channelEvent).channel
             assertEquals(channel.label, "from-chrome")
             await opened(channel)
-            const fromChrome = await nextEvent(channel, "message", 15000)
+            const fromChrome = await firstMessage
             assertEquals(fromChrome.data, "hello deno")
             channel.send("hello chrome")
             channel.send(new Uint8Array([1, 2, 3]))
@@ -110,6 +112,7 @@ Deno.test({
             })(${JSON.stringify(offer)})`)
             await pc.setRemoteDescription(answer)
             await opened(channel, 20000)
+            const reply = nextEvent(channel, "message", 20000)
             channel.send("from deno")
             const label = await page.evaluate(`(async () => {
                 const label = await channelReady
@@ -119,8 +122,7 @@ Deno.test({
                 return label
             })()`)
             assertEquals(label, "from-deno")
-            const reply = await nextEvent(channel, "message", 15000)
-            assertEquals(reply.data, "from chrome")
+            assertEquals((await reply).data, "from chrome")
             assertEquals(await page.evaluate("received"), ["from deno"])
             pc.close()
         })

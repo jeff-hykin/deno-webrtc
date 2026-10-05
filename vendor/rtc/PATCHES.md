@@ -19,3 +19,8 @@ SCTP fork's zw.2); bump `N` for new fork fixes, reset it when rebasing on a new 
 
 A channel the peer opened in-band (DCEP) reports the `maxRetransmits` / `maxPacketLifeTime` it was
 opened with, not `None`. Marked `deno-webrtc patch` in `src/data_channel/internal.rs`.
+
+Also: the SDP's `a=msid` lines name the sender's streams (`addTrack(track, stream)`, `setStreams`), one
+line per stream, instead of always the track's own stream id; and `replaceTrack` keeps the
+sender's streams. Marked `deno-webrtc patch` in `src/peer_connection/sdp/mod.rs` and
+`src/rtp_transceiver/rtp_sender/internal.rs`.

@@ -7,7 +7,6 @@ use crate::media::{LocalTrack, kind_name, parse_kind};
 use rtc::data_channel::RTCDataChannelInit;
 use rtc::peer_connection::configuration::RTCIceTransportPolicy;
 use rtc::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
-use rtc::peer_connection::transport::RTCIceCandidateType;
 use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use rtc::shared::marshal::Marshal;
 use serde::Deserialize;
@@ -91,6 +90,79 @@ pub struct ServerOptions {
 
 type Connection = Option<Result<Arc<dyn PeerConnection>, String>>;
 
+/// 1:1 NAT: advertise a public address for host candidates (webrtc-rs keeps the setting but never applies it).
+#[derive(Clone, Default)]
+pub struct Nat {
+    /// (public, the private address it maps; None: every private address)
+    mappings: Vec<(String, Option<IpAddr>)>,
+    /// keep the host candidate and add a server-reflexive one, rather than replacing it
+    as_srflx: bool,
+}
+
+impl Nat {
+    fn new(options: &ServerOptions) -> Nat {
+        let mappings = options
+            .nat1to1_ips
+            .iter()
+            .map(|entry| match entry.split_once('/') {
+                Some((public, private)) => (public.to_owned(), private.parse().ok()),
+                None => (entry.clone(), None),
+            })
+            .collect();
+        Nat { mappings, as_srflx: options.nat1to1_candidate_type.as_deref() == Some("srflx") }
+    }
+
+    /// The candidate lines to advertise in place of `candidate` ("candidate:..." without "a=").
+    fn rewrite(&self, candidate: &str) -> Vec<String> {
+        let fields: Vec<&str> = candidate.split_whitespace().collect();
+        if self.mappings.is_empty() || fields.len() < 8 || fields[7] != "host" {
+            return vec![candidate.to_owned()];
+        }
+        let Ok(address) = fields[4].parse::<IpAddr>() else { return vec![candidate.to_owned()] };
+        if address.is_loopback() {
+            return vec![candidate.to_owned()];
+        }
+        let public = self
+            .mappings
+            .iter()
+            .find(|(_, private)| *private == Some(address))
+            .or_else(|| self.mappings.iter().find(|(public, private)| private.is_none() && public.parse::<IpAddr>().map(|ip| ip.is_ipv4() == address.is_ipv4()).unwrap_or(true)))
+            .map(|(public, _)| public.clone());
+        let Some(public) = public else { return vec![candidate.to_owned()] };
+        if self.as_srflx {
+            let priority = fields[3].parse::<u32>().unwrap_or(0) & 0x00ff_ffff | (100 << 24);
+            let srflx = format!(
+                "{}1 {} {} {} {} {} typ srflx raddr {} rport {}",
+                fields[0], fields[1], fields[2], priority, public, fields[5], fields[4], fields[5]
+            );
+            vec![candidate.to_owned(), srflx]
+        } else {
+            let mut fields: Vec<String> = fields.iter().map(|field| field.to_string()).collect();
+            fields[4] = public;
+            vec![fields.join(" ")]
+        }
+    }
+
+    fn rewrite_sdp(&self, description: Value) -> Value {
+        let Some(sdp) = description.get("sdp").and_then(Value::as_str) else { return description };
+        if self.mappings.is_empty() {
+            return description;
+        }
+        let mut lines = Vec::new();
+        for line in sdp.split("\r\n") {
+            match line.strip_prefix("a=") {
+                Some(candidate) if candidate.starts_with("candidate:") => {
+                    lines.extend(self.rewrite(candidate).into_iter().map(|candidate| format!("a={candidate}")))
+                }
+                _ => lines.push(line.to_owned()),
+            }
+        }
+        let mut description = description;
+        description["sdp"] = Value::String(lines.join("\r\n"));
+        description
+    }
+}
+
 type Job = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 pub struct Peer {
@@ -104,6 +176,7 @@ pub struct Peer {
     rtp_wanted: Arc<Mutex<HashSet<usize>>>,
     port: Mutex<Option<u16>>,
     closed: AtomicBool,
+    nat: Nat,
 }
 
 static PORTS_IN_USE: LazyLock<Mutex<HashSet<u16>>> = LazyLock::new(Default::default);
@@ -162,6 +235,7 @@ fn bind_addresses(options: &ServerOptions, port: u16) -> Result<Vec<String>, Str
 
 struct Handler {
     handle: u32,
+    nat: Nat,
     events: Arc<EventQueue>,
     connection: watch::Receiver<Connection>,
     rtp_wanted: Arc<Mutex<HashSet<usize>>>,
@@ -175,7 +249,11 @@ impl PeerConnectionEventHandler for Handler {
 
     async fn on_ice_candidate(&self, event: RTCPeerConnectionIceEvent) {
         let Ok(candidate) = event.candidate.to_json() else { return };
-        self.events.emit(json!({"t": "pc_icecandidate", "pc": self.handle, "candidate": candidate, "url": event.url}));
+        for advertised in self.nat.rewrite(&candidate.candidate) {
+            let mut candidate = candidate.clone();
+            candidate.candidate = advertised;
+            self.events.emit(json!({"t": "pc_icecandidate", "pc": self.handle, "candidate": candidate, "url": event.url}));
+        }
     }
 
     async fn on_ice_candidate_error(&self, event: RTCPeerConnectionIceErrorEvent) {
@@ -367,8 +445,9 @@ impl Peer {
             rtp_wanted: rtp_wanted.clone(),
             port: Mutex::new(port),
             closed: AtomicBool::new(false),
+            nat: Nat::new(&options),
         });
-        let handler = Arc::new(Handler { handle, events, connection, rtp_wanted });
+        let handler = Arc::new(Handler { handle, nat: Nat::new(&options), events, connection, rtp_wanted });
         crate::runtime().spawn(async move {
             let result = build(configuration, certificates, options, port.unwrap_or(0), handler)
                 .await
@@ -423,9 +502,9 @@ impl Peer {
             transceivers.push(describe_transceiver(&transceiver, &tracks).await);
         }
         Ok(json!({
-            "localDescription": description_json(connection.local_description().await),
-            "currentLocalDescription": description_json(connection.current_local_description().await),
-            "pendingLocalDescription": description_json(pending_local),
+            "localDescription": self.nat.rewrite_sdp(with_trickle(description_json(connection.local_description().await))),
+            "currentLocalDescription": self.nat.rewrite_sdp(with_trickle(description_json(connection.current_local_description().await))),
+            "pendingLocalDescription": self.nat.rewrite_sdp(with_trickle(description_json(pending_local))),
             "remoteDescription": description_json(connection.remote_description().await),
             "currentRemoteDescription": description_json(connection.current_remote_description().await),
             "pendingRemoteDescription": description_json(pending_remote),
@@ -460,7 +539,12 @@ impl Peer {
                 Ok(with_trickle(description_json(Some(answer))))
             }
             "setLocalDescription" => {
-                let description = parse_description(args.get("description").unwrap_or(&Value::Null))?;
+                // webrtc-rs only takes back exactly the SDP it made, without the trickle line we add
+                let mut description = args.get("description").cloned().unwrap_or(Value::Null);
+                if let Some(sdp) = description.get("sdp").and_then(Value::as_str) {
+                    description["sdp"] = Value::String(sdp.replacen("a=ice-options:trickle\r\n", "", 1));
+                }
+                let description = parse_description(&description)?;
                 connection.set_local_description(description).await.map_err(error_text)?;
                 self.renegotiated();
                 self.snapshot().await
@@ -726,13 +810,6 @@ async fn build(
 
     let mut settings = SettingEngineBuilder::new()
         .with_sctp_max_message_size(SctpMaxMessageSize::Bounded(options.max_message_size.unwrap_or(256 * 1024)));
-    if !options.nat1to1_ips.is_empty() {
-        let candidate_type = match options.nat1to1_candidate_type.as_deref() {
-            Some("srflx") => RTCIceCandidateType::Srflx,
-            _ => RTCIceCandidateType::Host,
-        };
-        settings = settings.with_nat_1to1_ips(options.nat1to1_ips.clone(), candidate_type);
-    }
     if options.ice_lite {
         settings = settings.with_lite(true);
     }

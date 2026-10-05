@@ -14,6 +14,8 @@ Deno.test({
         a.onconnectionstatechange = () => connection.a.push(a.connectionState)
         b.onconnectionstatechange = () => connection.b.push(b.connectionState)
         a.createDataChannel("x")
+        a.onicecandidate = ({ candidate }) => candidate && b.addIceCandidate(candidate)
+        b.onicecandidate = ({ candidate }) => candidate && a.addIceCandidate(candidate)
 
         assertEquals(a.signalingState, "stable")
         assertEquals(a.localDescription, null)
@@ -38,8 +40,6 @@ Deno.test({
         assertEquals(a.signalingState, "stable")
         assertEquals(a.currentRemoteDescription.type, "answer")
 
-        a.onicecandidate = ({ candidate }) => candidate && b.addIceCandidate(candidate)
-        b.onicecandidate = ({ candidate }) => candidate && a.addIceCandidate(candidate)
         await Promise.all([waitForState(a, "connected"), waitForState(b, "connected")])
         assertEquals(states.a, ["have-local-offer", "stable"])
         assertEquals(states.b, ["have-remote-offer", "stable"])

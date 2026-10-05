@@ -127,7 +127,7 @@ export function release() {
 
 let buffer = new Uint8Array(64 * 1024)
 
-function drain() {
+async function drain() {
     for (;;) {
         const size = native.dwrtc_next_size(context)
         if (size === 0) {
@@ -144,6 +144,11 @@ function drain() {
         const header = JSON.parse(decoder.decode(buffer.subarray(4, 4 + headerLength)))
         const payload = buffer.slice(4 + headerLength, length)
         dispatch(header, payload)
+        // a browser runs each event as its own task: let promise callbacks from this one (which
+        // may add listeners for the next) run first
+        for (let turn = 0; turn < 4; turn++) {
+            await null
+        }
     }
 }
 
@@ -182,7 +187,7 @@ async function pump() {
     try {
         while (keepAlive > 0) {
             await native.dwrtc_wait(context, -1)
-            drain()
+            await drain()
         }
     } finally {
         pumping = false

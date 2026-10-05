@@ -707,7 +707,13 @@ export class RTCPeerConnection extends EventTarget {
         }
         switch (event.t) {
             case "pc_icecandidate": {
-                const candidate = new RTCIceCandidate(event.candidate)
+                const init = { ...event.candidate }
+                // webrtc-rs leaves sdpMid empty; a browser names the m-section
+                if (!init.sdpMid && this.#descriptions.localDescription) {
+                    const sections = mediaSections(this.#descriptions.localDescription.sdp)
+                    init.sdpMid = sections[init.sdpMLineIndex ?? 0]?.mid ?? null
+                }
+                const candidate = new RTCIceCandidate(init)
                 if (candidate.candidate) {
                     const line = candidate.candidate.startsWith("a=") ? candidate.candidate : `a=${candidate.candidate}`
                     this.#addToLocalDescriptions(candidate.sdpMid, candidate.sdpMLineIndex, line)

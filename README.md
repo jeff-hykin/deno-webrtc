@@ -110,7 +110,7 @@ These are non-standard, so they go in a second argument to the constructor:
 |---|---|
 | `portRange: { min, max }` | Takes each connection's UDP port from this range. |
 | `udpMux: new nonstandard.UdpMux({ port })` | All connections share **one** UDP port (on each local address). The first STUN request's ICE username decides which connection a remote address belongs to. |
-| `nat1to1Ips: ["203.0.113.7"]` | Advertises this public IP, e.g. on a cloud VM behind 1:1 NAT. |
+| `nat1to1Ips: ["203.0.113.7"]` | Advertises this public IP, e.g. on a cloud VM behind 1:1 NAT. With several addresses, write `"public/private"` pairs (`"203.0.113.7/10.0.0.5"`). |
 | `nat1to1CandidateType: "host"` or `"srflx"` | `"host"` (the default) replaces the private address. `"srflx"` keeps it and adds the public one. |
 | `bindAddresses: ["0.0.0.0"]` | Addresses to listen on. A wildcard expands to every interface. |
 | `interfaces: ["eth0"]` | Only use these network interfaces. |

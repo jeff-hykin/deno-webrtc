@@ -40,7 +40,7 @@ jobs:
             built: target/release/deno_webrtc.dll
             file: deno_webrtc-windows-x86_64.dll
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: rust (container)
         if: matrix.container
         run: |
@@ -60,7 +60,7 @@ jobs:
           cargo build --release --locked
           mkdir -p dist
           cp "${{ matrix.built }}" "dist/${{ matrix.file }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.file }}
           path: dist/${{ matrix.file }}
@@ -80,11 +80,11 @@ jobs:
           - { platform: darwin-x86_64, runner: macos-15-intel, file: libdeno_webrtc-darwin-x86_64.dylib, chrome: "0" }
           - { platform: windows-x86_64, runner: windows-2025, file: deno_webrtc-windows-x86_64.dll, chrome: "0" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: ${{ matrix.file }}
           path: dist

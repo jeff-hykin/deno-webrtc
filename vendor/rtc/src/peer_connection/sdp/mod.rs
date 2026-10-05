@@ -869,17 +869,18 @@ impl RTCPeerConnection {
                 sender.get_parameters(media_engine).encodings.clone(),
                 sender.track(),
             );
+            // deno-webrtc patch: the streams addTrack/setStreams named, not only the track's own
+            let streams: Vec<String> = sender.streams().to_vec();
+            let first_stream = streams.first().cloned().unwrap_or_else(|| track.stream_id().to_owned());
 
             let is_simulcast = encodings.len() > 1
                 && encodings
                     .iter()
                     .all(|encoding| !encoding.rtp_coding_parameters.rid.is_empty());
 
-            media = media.with_property_attribute(format!(
-                "msid:{} {}",
-                track.stream_id(),
-                track.track_id()
-            ));
+            for stream in if streams.is_empty() { vec![track.stream_id().to_owned()] } else { streams.clone() } {
+                media = media.with_property_attribute(format!("msid:{} {}", stream, track.track_id()));
+            }
 
             if write_ssrc_attributes_for_simulcast || !is_simulcast {
                 for encoding in &encodings {
@@ -913,7 +914,7 @@ impl RTCPeerConnection {
                         media = media.with_media_source(
                             ssrc,
                             track.stream_id().clone(),    /* cname */
-                            track.stream_id().to_owned(), /* stream_id */
+                            first_stream.clone(), /* stream_id */
                             track.track_id().to_owned(),
                         );
 
@@ -921,7 +922,7 @@ impl RTCPeerConnection {
                             media = media.with_media_source(
                                 rtx.ssrc,
                                 track.stream_id().clone(),    /* cname */
-                                track.stream_id().to_owned(), /* stream_id */
+                                first_stream.clone(), /* stream_id */
                                 track.track_id().to_owned(),
                             );
                         }
@@ -930,7 +931,7 @@ impl RTCPeerConnection {
                             media = media.with_media_source(
                                 fec.ssrc,
                                 track.stream_id().clone(),    /* cname */
-                                track.stream_id().to_owned(), /* stream_id */
+                                first_stream.clone(), /* stream_id */
                                 track.track_id().to_owned(),
                             );
                         }

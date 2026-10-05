@@ -266,8 +266,7 @@ impl RTCRtpSenderInternal {
         //  return Err(Error::InvalidStateError);
         //}
 
-        self.associated_media_stream_ids = vec![track.stream_id().to_string()];
-
+        // deno-webrtc patch: replaceTrack keeps the sender's streams, as the spec says
         self.sender_track = track;
 
         Ok(())
