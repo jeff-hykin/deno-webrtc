@@ -163,7 +163,10 @@ function dispatch(header, payload) {
         return
     }
     const handle = header.pc ?? header.dc ?? header.track
-    const target = targets.get(handle)
+    let target = targets.get(handle)
+    if (target instanceof WeakRef) {
+        target = target.deref()
+    }
     if (target) {
         try {
             target.onNativeEvent(header, payload)

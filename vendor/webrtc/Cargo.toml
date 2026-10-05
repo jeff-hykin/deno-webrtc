@@ -76,6 +76,7 @@ default-features = false
 [dependencies.rtc]
 package = "zenoh-web-rtc"
 version = "=0.21.0-zw.2"
+path = "../rtc"
 default-features = false
 
 [dependencies.smol]

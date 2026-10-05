@@ -1,6 +1,6 @@
 // MediaStreamTrack, MediaStream, the RTP sender/receiver/transceiver, and the non-standard RtpTrack.
 
-import { call, context, native, register } from "./ffi.js"
+import { call, context, native, register, unregister } from "./ffi.js"
 import { MediaStreamTrackEvent, RTCRtpPacketEvent, defineEventHandlers } from "./events.js"
 
 const SECRET = Symbol("deno-webrtc internal")
@@ -137,6 +137,12 @@ defineEventHandlers(RemoteMediaStreamTrack, ["rtp"])
  * track.writeSample(annexBFrame, { duration: 33 })
  * ```
  */
+// a garbage-collected RtpTrack frees its native half
+const trackFinalizer = new FinalizationRegistry((handle) => {
+    unregister(handle)
+    call({ op: "free", handle })
+})
+
 export class RtpTrack extends MediaStreamTrack {
     #handle
     #streamId
@@ -157,7 +163,8 @@ export class RtpTrack extends MediaStreamTrack {
         this.#handle = described.handle
         this.#streamId = described.streamId
         this.#mimeType = init.mimeType
-        register(this.#handle, this)
+        register(this.#handle, new WeakRef(this))
+        trackFinalizer.register(this, this.#handle)
     }
     get mimeType() {
         return this.#mimeType

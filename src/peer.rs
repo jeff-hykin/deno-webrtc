@@ -295,6 +295,19 @@ fn description_json(description: Option<RTCSessionDescription>) -> Value {
     }
 }
 
+/// Browsers announce trickle ICE in every offer and answer; webrtc-rs trickles but doesn't say so.
+fn with_trickle(mut description: Value) -> Value {
+    if let Some(sdp) = description.get("sdp").and_then(Value::as_str)
+        && !sdp.contains("a=ice-options:")
+        && let Some(timing) = sdp.find("\r\nt=")
+    {
+        let line_end = sdp[timing + 2..].find("\r\n").map(|end| timing + 2 + end + 2).unwrap_or(sdp.len());
+        let sdp = format!("{}a=ice-options:trickle\r\n{}", &sdp[..line_end], &sdp[line_end..]);
+        description["sdp"] = Value::String(sdp);
+    }
+    description
+}
+
 fn parse_description(value: &Value) -> Result<RTCSessionDescription, String> {
     let kind = value.get("type").and_then(Value::as_str).unwrap_or_default();
     let sdp = value.get("sdp").and_then(Value::as_str).unwrap_or_default().to_owned();
@@ -440,11 +453,11 @@ impl Peer {
                 let ice_restart = args.get("iceRestart").and_then(Value::as_bool).unwrap_or(false);
                 let options = ice_restart.then(|| rtc::peer_connection::configuration::RTCOfferOptions { ice_restart });
                 let offer = connection.create_offer(options).await.map_err(error_text)?;
-                Ok(description_json(Some(offer)))
+                Ok(with_trickle(description_json(Some(offer))))
             }
             "createAnswer" => {
                 let answer = connection.create_answer(None).await.map_err(error_text)?;
-                Ok(description_json(Some(answer)))
+                Ok(with_trickle(description_json(Some(answer))))
             }
             "setLocalDescription" => {
                 let description = parse_description(args.get("description").unwrap_or(&Value::Null))?;
@@ -642,6 +655,7 @@ impl Peer {
                 let _ = tokio::time::timeout(Duration::from_secs(5), connection.close()).await;
             }
             events.emit(json!({"t": "pc_closed", "pc": handle}));
+            handles::remove(handle);
         });
     }
 }

@@ -112,6 +112,23 @@ function mediaSections(sdp) {
     return sections
 }
 
+/** Adds `line` to the m-section with this mid (or index), or to every m-section when both are null. */
+function addToMediaSections(sdp, mid, index, line) {
+    const lines = sdp.split("\r\n")
+    const trailing = lines.at(-1) === "" ? 1 : 0
+    const starts = lines.flatMap((text, at) => (text.startsWith("m=") ? [at] : []))
+    for (let section = starts.length - 1; section >= 0; section--) {
+        const start = starts[section]
+        const end = section + 1 < starts.length ? starts[section + 1] : lines.length - trailing
+        const body = lines.slice(start, end)
+        const matches = (mid == null && index == null) || (mid != null ? body.includes(`a=mid:${mid}`) : section === index)
+        if (matches && !body.includes(line)) {
+            lines.splice(end, 0, line)
+        }
+    }
+    return lines.join("\r\n")
+}
+
 function description(value) {
     return value ? new RTCSessionDescription(value) : null
 }
@@ -562,7 +579,11 @@ export class RTCPeerConnection extends EventTarget {
     /** Mirrors the native side's descriptions and transceivers after a negotiation step. */
     #apply(snapshot, remoteChanged) {
         this.#descriptions = snapshot
+        const sections = [snapshot.remoteDescription, snapshot.localDescription].flatMap((value) => (value ? mediaSections(value.sdp) : []))
         for (const described of snapshot.transceivers) {
+            if (described.kind == null || described.kind === "unspecified") {
+                described.kind = sections.find((section) => section.mid != null && section.mid === described.mid)?.kind ?? null
+            }
             let transceiver = this.#transceivers.find((existing) => existing._id === described.id)
             const pendingSender = described.senderTrack != null ? this.#pendingSenders.get(described.senderTrack) : undefined
             if (!transceiver) {
@@ -656,6 +677,16 @@ export class RTCPeerConnection extends EventTarget {
         this.dispatchEvent(new Event("negotiationneeded"))
     }
 
+    /** The local description includes candidates as they are gathered, as in the browser. */
+    #addToLocalDescriptions(mid, index, line) {
+        for (const key of ["localDescription", "pendingLocalDescription", "currentLocalDescription"]) {
+            const local = this.#descriptions[key]
+            if (local?.sdp) {
+                this.#descriptions = { ...this.#descriptions, [key]: { ...local, sdp: addToMediaSections(local.sdp, mid, index, line) } }
+            }
+        }
+    }
+
     #transceiverById(id) {
         return this.#transceivers.find((transceiver) => transceiver._id === id)
     }
@@ -677,6 +708,10 @@ export class RTCPeerConnection extends EventTarget {
         switch (event.t) {
             case "pc_icecandidate": {
                 const candidate = new RTCIceCandidate(event.candidate)
+                if (candidate.candidate) {
+                    const line = candidate.candidate.startsWith("a=") ? candidate.candidate : `a=${candidate.candidate}`
+                    this.#addToLocalDescriptions(candidate.sdpMid, candidate.sdpMLineIndex, line)
+                }
                 this.dispatchEvent(new RTCPeerConnectionIceEvent("icecandidate", { candidate, url: event.url ?? null }))
                 break
             }
@@ -688,6 +723,7 @@ export class RTCPeerConnection extends EventTarget {
                     this.#iceGatheringState = event.state
                     this.dispatchEvent(new Event("icegatheringstatechange"))
                     if (event.state === "complete") {
+                        this.#addToLocalDescriptions(null, null, "a=end-of-candidates")
                         this.dispatchEvent(new RTCPeerConnectionIceEvent("icecandidate", { candidate: null }))
                     }
                 }

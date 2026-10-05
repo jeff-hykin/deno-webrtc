@@ -2248,8 +2248,6 @@ dependencies = [
 [[package]]
 name = "zenoh-web-rtc"
 version = "0.21.0-zw.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85963b3ff8691a6f02a118219fd0ef43b3142733c370919318931290aed5a13e"
 dependencies = [
  "bytes",
  "hex",

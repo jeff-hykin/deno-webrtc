@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 webrtc = { package = "zenoh-web-webrtc", path = "vendor/webrtc" }
-rtc = { package = "zenoh-web-rtc", version = "=0.21.0-zw.2" }
+rtc = { package = "zenoh-web-rtc", path = "vendor/rtc" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros"] }
 futures = "0.3"
 bytes = "1"
