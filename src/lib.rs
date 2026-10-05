@@ -196,8 +196,31 @@ fn call(args: &Value) -> Result<Value, String> {
     }
 }
 
+/// Keeps this library loaded for the life of the process. Deno closes a `dlopen` handle when the
+/// runtime that opened it ends (each `deno test` file, each Worker), and on Windows that unmaps
+/// the DLL under the runtime threads still running in it. Linux and macOS never unload it anyway
+/// (it has thread-local destructors).
+fn pin_library() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::LibraryLoader::{
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN, GetModuleHandleExW,
+        };
+        let mut module = std::ptr::null_mut();
+        unsafe {
+            GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                pin_library as *const () as *const u16,
+                &mut module,
+            );
+        }
+    }
+}
+
+/// JS calls this first, on every load.
 #[unsafe(no_mangle)]
 pub extern "C" fn dwrtc_abi_version() -> u32 {
+    pin_library();
     ABI_VERSION
 }
 

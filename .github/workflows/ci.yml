@@ -93,4 +93,8 @@ jobs:
         env:
           DENO_WEBRTC_LIB: ${{ github.workspace }}/dist/${{ matrix.file }}
           DENO_WEBRTC_SKIP_CHROME: ${{ matrix.chrome == '1' && '0' || '1' }}
-        run: deno task test
+          NO_COLOR: "1"
+        # the summary line proves every test file ran (a process that dies quietly can still exit 0)
+        run: |
+          deno task test 2>&1 | tee test-output.txt
+          grep -E "^ok \| [0-9]+ passed \| 0 failed" test-output.txt
