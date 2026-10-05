@@ -31,47 +31,51 @@ Permissions: `--allow-ffi --allow-env --allow-read --allow-write --allow-net` (`
 ## Example: a server answering a browser
 
 The browser makes an offer and POSTs it. Deno answers with every candidate already in the
-answer, so no further signaling is needed.
+answer, so no further signaling is needed. This is
+[`examples/http_server.js`](examples/http_server.js), which a test drives with headless Chrome.
 
 ```js
-// server.js: deno run -A server.js
 import { RTCPeerConnection } from "https://raw.githubusercontent.com/jeff-hykin/deno-webrtc/v0.1.0/mod.js"
 
 Deno.serve({ port: 8000 }, async (request) => {
     if (request.method !== "POST") {
         return new Response(PAGE, { headers: { "content-type": "text/html" } })
     }
-    const pc = new RTCPeerConnection(
-        { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] },
-        // non-standard: listen on a known port range
-        { portRange: { min: 50000, max: 50100 } },
-    )
+    // non-standard second argument: keep UDP inside a range a firewall can open
+    const pc = new RTCPeerConnection({}, { portRange: { min: 50000, max: 50100 } })
     pc.ondatachannel = ({ channel }) => {
         channel.onmessage = ({ data }) => channel.send(`echo: ${data}`)
     }
     pc.onconnectionstatechange = () => {
-        if (["failed", "closed"].includes(pc.connectionState)) {
+        if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
             pc.close()
         }
     }
     await pc.setRemoteDescription(await request.json())
     await pc.setLocalDescription()
     await new Promise((resolve) => {
-        pc.onicegatheringstatechange = () => pc.iceGatheringState === "complete" && resolve()
+        if (pc.iceGatheringState === "complete") {
+            return resolve()
+        }
+        pc.addEventListener("icegatheringstatechange", () => pc.iceGatheringState === "complete" && resolve())
     })
     return Response.json(pc.localDescription)
 })
 
-const PAGE = `<script type="module">
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] })
+const PAGE = `<!doctype html><body><script type="module">
+    const pc = new RTCPeerConnection()
     const channel = pc.createDataChannel("chat")
     channel.onopen = () => channel.send("hi")
     channel.onmessage = ({ data }) => document.body.append(data)
     await pc.setLocalDescription()
     const answer = await fetch("/", { method: "POST", body: JSON.stringify(pc.localDescription) })
     await pc.setRemoteDescription(await answer.json())
-</script>`
+</script></body>`
 ```
+
+On a server with a public IP behind 1:1 NAT (most cloud VMs), add `nat1to1Ips: ["<public ip>"]`;
+otherwise add a STUN server (`iceServers: [{ urls: "stun:stun.l.google.com:19302" }]`) and open
+the UDP port range.
 
 The same code works on the other end too: Deno to Deno, Deno to browser, or a browser to Deno.
 [`examples/loopback.js`](examples/loopback.js) connects two connections in one process.
