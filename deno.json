@@ -1,0 +1,19 @@
+{
+    "name": "@jeff-hykin/deno-webrtc",
+    "version": "0.1.0",
+    "exports": "./mod.js",
+    "tasks": {
+        "build": "cargo build --release",
+        "test": "deno test --allow-ffi --allow-env --allow-read --allow-write --allow-net --allow-run tests/"
+    },
+    "fmt": {
+        "indentWidth": 4,
+        "semiColons": false,
+        "lineWidth": 160
+    },
+    "lint": {
+        "rules": {
+            "exclude": ["no-explicit-any"]
+        }
+    }
+}
