@@ -167,17 +167,29 @@ Deno.test({
 })
 
 Deno.test({
-    name: "renegotiation: a second channel after connecting, and negotiationneeded",
+    name: "renegotiation: a channel created after connecting opens on the other side",
     ...options,
     async fn() {
         const [a, b] = pair()
+        const announced = new Map()
+        const second = new Promise((resolve) => {
+            b.ondatachannel = ({ channel }) => {
+                announced.set(channel.label, channel)
+                if (channel.label === "second") {
+                    resolve(channel)
+                }
+            }
+        })
         const first = a.createDataChannel("first")
         await negotiate(a, b)
         await opened(first)
-        const announced = nextEvent(b, "datachannel")
-        const second = a.createDataChannel("second")
-        await opened(second)
-        assertEquals((await announced).channel.label, "second")
+        const later = a.createDataChannel("second")
+        await opened(later)
+        const remote = await second
+        await opened(remote)
+        const message = nextEvent(remote, "message")
+        later.send("on the second channel")
+        assertEquals((await message).data, "on the second channel")
         a.close()
         b.close()
     },
